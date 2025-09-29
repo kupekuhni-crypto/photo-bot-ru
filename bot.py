@@ -1,106 +1,76 @@
 import os
-import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.fsm.context import FSMContext
+from aiogram.enums import ParseMode
+import asyncio
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
+# Берём токен из переменной окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+YOOMONEY_RESTORE_URL = os.getenv("YOOMONEY_RESTORE_URL")
+YOOMONEY_ANIMATE_URL = os.getenv("YOOMONEY_ANIMATE_URL")
 
-# Получение переменных окружения
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-YOOMONEY_RESTORE_URL = os.getenv('YOOMONEY_RESTORE_URL')
-YOOMONEY_ANIMATE_URL = os.getenv('YOOMONEY_ANIMATE_URL')
+# Проверка на наличие токена
+if not BOT_TOKEN:
+    raise RuntimeError("Необходимо указать BOT_TOKEN в переменных окружения.")
 
-# Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
 
-# Состояния FSM
-class ServiceStates(StatesGroup):
-    choosing_service = State()
-    waiting_payment = State()
+# ---- FSM ----
+class ServiceChoice(StatesGroup):
+    waiting_for_payment = State()
 
-# Главное меню
-def get_main_keyboard():
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Восстановить и раскрасить фото")],
-            [KeyboardButton(text="Оживить лицо на фото")]
-        ],
-        resize_keyboard=True
-    )
-    return keyboard
+# ---- Клавиатура ----
+main_kb = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Восстановить и раскрасить фото")],
+        [KeyboardButton(text="Оживить лицо на фото")],
+    ],
+    resize_keyboard=True
+)
 
-# Обработчик команды /start
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
+# ---- Хэндлеры ----
+@dp.message(F.text.in_(["/start", "/help"]))
+async def start_handler(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "Привет! Я бот для обработки фотографий.\n\n"
+        "Привет! Я могу помочь с фото.\n"
         "Выберите услугу:",
-        reply_markup=get_main_keyboard()
+        reply_markup=main_kb
     )
-    await state.set_state(ServiceStates.choosing_service)
 
-# Обработчик выбора услуги восстановления
-@dp.message(lambda message: message.text == "Восстановить и раскрасить фото", ServiceStates.choosing_service)
-async def restore_photo(message: types.Message, state: FSMContext):
+@dp.message(F.text == "Восстановить и раскрасить фото")
+async def restore_handler(message: Message, state: FSMContext):
+    if not YOOMONEY_RESTORE_URL:
+        await message.answer("⚠️ Не задана ссылка YOOMONEY_RESTORE_URL.")
+        return
+    await state.set_state(ServiceChoice.waiting_for_payment)
     await message.answer(
-        f"Услуга: Восстановление и раскрашивание фото\n\n"
-        f"Для оплаты перейдите по ссылке:\n{YOOMONEY_RESTORE_URL}\n\n"
-        f"После оплаты напишите «Готово»",
-        reply_markup=ReplyKeyboardRemove()
+        f"ℹ️ Для продолжения оплатите услугу по ссылке:\n{YOOMONEY_RESTORE_URL}\n\n"
+        "После оплаты напишите: <b>Готово</b>"
     )
-    await state.update_data(service="restore")
-    await state.set_state(ServiceStates.waiting_payment)
 
-# Обработчик выбора услуги анимации
-@dp.message(lambda message: message.text == "Оживить лицо на фото", ServiceStates.choosing_service)
-async def animate_photo(message: types.Message, state: FSMContext):
+@dp.message(F.text == "Оживить лицо на фото")
+async def animate_handler(message: Message, state: FSMContext):
+    if not YOOMONEY_ANIMATE_URL:
+        await message.answer("⚠️ Не задана ссылка YOOMONEY_ANIMATE_URL.")
+        return
+    await state.set_state(ServiceChoice.waiting_for_payment)
     await message.answer(
-        f"Услуга: Оживление лица на фото\n\n"
-        f"Для оплаты перейдите по ссылке:\n{YOOMONEY_ANIMATE_URL}\n\n"
-        f"После оплаты напишите «Готово»",
-        reply_markup=ReplyKeyboardRemove()
+        f"ℹ️ Для продолжения оплатите услугу по ссылке:\n{YOOMONEY_ANIMATE_URL}\n\n"
+        "После оплаты напишите: <b>Готово</b>"
     )
-    await state.update_data(service="animate")
-    await state.set_state(ServiceStates.waiting_payment)
 
-# Обработчик подтверждения оплаты
-@dp.message(lambda message: message.text.lower() == "готово", ServiceStates.waiting_payment)
-async def payment_done(message: types.Message, state: FSMContext):
-    await message.answer("✅ Обработка завершена")
-    await message.answer(
-        "Выберите следующую услугу:",
-        reply_markup=get_main_keyboard()
-    )
-    await state.set_state(ServiceStates.choosing_service)
+@dp.message(ServiceChoice.waiting_for_payment, F.text.lower() == "готово")
+async def done_handler(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("✅ Обработка завершена", reply_markup=main_kb)
 
-# Обработчик всех остальных сообщений в состоянии ожидания оплаты
-@dp.message(ServiceStates.waiting_payment)
-async def waiting_payment_other(message: types.Message):
-    await message.answer("Пожалуйста, напишите «Готово» после оплаты.")
-
-# Обработчик всех остальных сообщений
-@dp.message()
-async def echo(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is None or current_state == ServiceStates.choosing_service:
-        await message.answer(
-            "Пожалуйста, выберите услугу из меню:",
-            reply_markup=get_main_keyboard()
-        )
-        await state.set_state(ServiceStates.choosing_service)
-
-# Запуск бота
+# ---- Точка входа ----
 async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    import asyncio
-    
+    asyncio.run(main())
