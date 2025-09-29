@@ -5,7 +5,10 @@ from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.types import Message, LabeledPrice, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    Message, LabeledPrice,
+    ReplyKeyboardMarkup, KeyboardButton
+)
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.client.default import DefaultBotProperties
@@ -14,7 +17,7 @@ from aiohttp import web
 
 # --- Конфиги ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-PAYMENT_PROVIDER_TOKEN = os.getenv("YOOMONEY_PROVIDER")
+PAYMENT_PROVIDER_TOKEN = os.getenv("YOOMONEY_PROVIDER")  # можно вставить TEST токен
 REPLICATE_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
 if not BOT_TOKEN or not PAYMENT_PROVIDER_TOKEN or not REPLICATE_TOKEN:
@@ -38,7 +41,7 @@ PRICES = {
     "pack5": 79900,
 }
 
-# --- Модели Replicate (замени version-id!) ---
+# --- Модели Replicate (замени version-id на реальные) ---
 MODELS = {
     "restore": "sczhou/codeformer:version-id",
     "colorize": "jantic/deoldify:version-id",
@@ -143,23 +146,42 @@ async def handle_demo(m: Message, state: FSMContext):
     await bot.send_photo(m.chat.id, marked, caption="Это демо ✨ Оплатите услугу, чтобы получить результат без водяного знака.")
     await state.update_data(original_photo_url=photo_url)
 
-# --- Отправка счётов ---
+# --- Универсальная функция оплаты ---
 async def send_invoice(m: Message, service: str, title: str, desc: str):
     prices = [LabeledPrice(label=title, amount=PRICES[service])]
     await bot.send_invoice(m.chat.id, title=title, description=desc,
         provider_token=PAYMENT_PROVIDER_TOKEN,
         currency="RUB", prices=prices, payload=service)
 
-@dp.message(F.text.startswith("🖼")) async def pay_restore(m: Message): await send_invoice(m,"restore","Восстановление фото","Реставрация фото ИИ")
-@dp.message(F.text.startswith("🎨")) async def pay_color(m: Message): await send_invoice(m,"colorize","Раскрашивание фото","Раскрасим чёрно-белое фото")
-@dp.message(F.text.startswith("🔎")) async def pay_up(m: Message): await send_invoice(m,"upscale","Апскейл","Увеличение чёткости и размера фото")
-@dp.message(F.text.startswith("😊")) async def pay_anim(m: Message): await send_invoice(m,"animate","Оживление лица","Сделаем анимацию лица на фото")
-@dp.message(F.text.startswith("📦 Пакет 3")) async def pay_pack3(m: Message): await send_invoice(m,"pack3","Пакет 3 фото","Обработка трёх фото")
-@dp.message(F.text.startswith("📦 Пакет 5")) async def pay_pack5(m: Message): await send_invoice(m,"pack5","Пакет 5 фото","Обработка пяти фото")
+# --- Хэндлеры услуг и пакетов ---
+@dp.message(F.text.startswith("🖼"))
+async def pay_restore(m: Message):
+    await send_invoice(m, "restore", "Восстановление фото", "Реставрация фото ИИ")
+
+@dp.message(F.text.startswith("🎨"))
+async def pay_colorize(m: Message):
+    await send_invoice(m, "colorize", "Раскрашивание фото", "Раскрасим чёрно-белое фото")
+
+@dp.message(F.text.startswith("🔎"))
+async def pay_upscale(m: Message):
+    await send_invoice(m, "upscale", "Апскейл", "Увеличение чёткости и размера фото")
+
+@dp.message(F.text.startswith("😊"))
+async def pay_animate(m: Message):
+    await send_invoice(m, "animate", "Оживление лица", "Анимация лица на фото")
+
+@dp.message(F.text.startswith("📦 Пакет 3"))
+async def pay_pack3(m: Message):
+    await send_invoice(m, "pack3", "Пакет 3 фото", "Обработка трёх фото")
+
+@dp.message(F.text.startswith("📦 Пакет 5"))
+async def pay_pack5(m: Message):
+    await send_invoice(m, "pack5", "Пакет 5 фото", "Обработка пяти фото")
 
 # --- Pre-checkout ---
 @dp.pre_checkout_query()
-async def pcq(pre: types.PreCheckoutQuery): await bot.answer_pre_checkout_query(pre.id, ok=True)
+async def pcq(pre: types.PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre.id, ok=True)
 
 # --- Оплата ---
 @dp.message(F.successful_payment)
@@ -170,7 +192,7 @@ async def payment_ok(m: Message, state: FSMContext):
 
     if photo_url:
         await m.answer("✅ Оплата прошла! Обрабатываю ваше фото...")
-        result = await process_replicate(photo_url, MODELS[service if service in MODELS else "restore"])
+        result = await process_replicate(photo_url, MODELS.get(service, MODELS["restore"]))
         if not result:
             await m.answer("⚠️ Ошибка при обработке фото.")
             return
@@ -183,11 +205,14 @@ async def payment_ok(m: Message, state: FSMContext):
         await m.answer("✅ Оплата прошла! Теперь пришлите фото для обработки.")
 
 # --- Healthcheck ---
-async def handle_health(request): return web.Response(text="OK", status=200)
+async def handle_health(request):
+    return web.Response(text="OK", status=200)
+
 async def start_webserver():
     app = web.Application()
     app.router.add_get("/", handle_health)
-    runner = web.AppRunner(app); await runner.setup()
+    runner = web.AppRunner(app)
+    await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
     await site.start()
 
