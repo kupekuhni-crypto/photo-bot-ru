@@ -6,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiohttp import web
 
 # --- Переменные окружения ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -16,10 +17,7 @@ if not BOT_TOKEN:
     raise RuntimeError("Необходимо указать BOT_TOKEN в переменных окружения.")
 
 # --- Создание бота и диспетчера ---
-bot = Bot(
-    token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 # --- FSM ---
@@ -71,8 +69,23 @@ async def done_handler(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Обработка завершена", reply_markup=main_kb)
 
+# --- Healthcheck endpoint для UptimeRobot ---
+async def handle_health(request):
+    return web.Response(text="OK", status=200)
+
+async def start_webserver():
+    app = web.Application()
+    app.router.add_get("/", handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
+    await site.start()
+
 # --- Точка входа ---
 async def main():
+    # Запускаем healthcheck‑сервер
+    asyncio.create_task(start_webserver())
+    # Запускаем бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
