@@ -1,28 +1,32 @@
 import os
+import asyncio
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-import asyncio
 
-# Берём токен из переменной окружения
+# --- Переменные окружения ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 YOOMONEY_RESTORE_URL = os.getenv("YOOMONEY_RESTORE_URL")
 YOOMONEY_ANIMATE_URL = os.getenv("YOOMONEY_ANIMATE_URL")
 
-# Проверка на наличие токена
 if not BOT_TOKEN:
     raise RuntimeError("Необходимо указать BOT_TOKEN в переменных окружения.")
 
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+# --- Создание бота и диспетчера ---
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher()
 
-# ---- FSM ----
+# --- FSM ---
 class ServiceChoice(StatesGroup):
     waiting_for_payment = State()
 
-# ---- Клавиатура ----
+# --- Клавиатура ---
 main_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Восстановить и раскрасить фото")],
@@ -31,13 +35,12 @@ main_kb = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# ---- Хэндлеры ----
+# --- Хэндлеры ---
 @dp.message(F.text.in_(["/start", "/help"]))
 async def start_handler(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "Привет! Я могу помочь с фото.\n"
-        "Выберите услугу:",
+        "Привет! Я могу помочь с фото.\nВыберите услугу:",
         reply_markup=main_kb
     )
 
@@ -68,7 +71,7 @@ async def done_handler(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Обработка завершена", reply_markup=main_kb)
 
-# ---- Точка входа ----
+# --- Точка входа ---
 async def main():
     await dp.start_polling(bot)
 
