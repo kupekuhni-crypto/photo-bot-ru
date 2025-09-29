@@ -1,103 +1,109 @@
-# bot.py
 import os
 import logging
-from aiogram import Bot, Dispatcher, Router, types
-from aiogram.types import (
-    Message, ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-import replicate
-import asyncio
-import tempfile
-import aiohttp
-import base64
-from PIL import Image
-import io
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-YOOMONEY_PACK1 = os.getenv("YOOMONEY_PACK1_URL", "https://yoomoney.ru")
-YOOMONEY_PACK3 = os.getenv("YOOMONEY_PACK3_URL", "https://yoomoney.ru")
-YOOMONEY_PACK5 = os.getenv("YOOMONEY_PACK5_URL", "https://yoomoney.ru")
-YOOMONEY_ANIMATE = os.getenv("YOOMONEY_ANIMATE_URL", "https://yoomoney.ru")
 
+# Получение переменных окружения
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+YOOMONEY_RESTORE_URL = os.getenv('YOOMONEY_RESTORE_URL')
+YOOMONEY_ANIMATE_URL = os.getenv('YOOMONEY_ANIMATE_URL')
+
+# Инициализация бота и диспетчера
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
-router = Router()
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
-class UserState(StatesGroup):
-    service = State()
-    photos = State()
+# Состояния FSM
+class ServiceStates(StatesGroup):
+    choosing_service = State()
+    waiting_payment = State()
 
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="Восстановить и раскрасить фото")],
-        [KeyboardButton(text="Оживить лицо на фото")],
-        [KeyboardButton(text="❓ Инструкция и цены")]
-    ],
-    resize_keyboard=True
-)
-
-@router.message(Command("start"))
-async def start(message: Message, state: FSMContext):
-    await message.answer(
-        "Здравствуйте!\n\n"
-        "Этот бот поможет бережно восстановить старые фотографии ваших близких:\n"
-        "✨ Уберём царапины и пятна\n"
-        "✨ Увеличим качество в 4 раза\n"
-        "✨ Вернём естественные цвета\n"
-        "🎥 Оживим лицо на фото (лёгкая анимация)\n\n"
-        "Нажмите кнопку и отправьте фото.",
-        reply_markup=MAIN_KEYBOARD
+# Главное меню
+def get_main_keyboard():
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Восстановить и раскрасить фото")],
+            [KeyboardButton(text="Оживить лицо на фото")]
+        ],
+        resize_keyboard=True
     )
+    return keyboard
 
-@router.message(lambda m: m.text == "Восстановить и раскрасить фото")
-async def restore_start(message: Message, state: FSMContext):
-    await state.set_state(UserState.photos)
+# Обработчик команды /start
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Привет! Я бот для обработки фотографий.\n\n"
+        "Выберите услугу:",
+        reply_markup=get_main_keyboard()
+    )
+    await state.set_state(ServiceStates.choosing_service)
+
+# Обработчик выбора услуги восстановления
+@dp.message(lambda message: message.text == "Восстановить и раскрасить фото", ServiceStates.choosing_service)
+async def restore_photo(message: types.Message, state: FSMContext):
+    await message.answer(
+        f"Услуга: Восстановление и раскрашивание фото\n\n"
+        f"Для оплаты перейдите по ссылке:\n{YOOMONEY_RESTORE_URL}\n\n"
+        f"После оплаты напишите «Готово»",
+        reply_markup=ReplyKeyboardRemove()
+    )
     await state.update_data(service="restore")
-    pay_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1 фото — 110 ₽", url=YOOMONEY_PACK1)],
-        [InlineKeyboardButton(text="3 фото — 280 ₽", url=YOOMONEY_PACK3)],
-        [InlineKeyboardButton(text="5 фото — 420 ₽", url=YOOMONEY_PACK5)]
-    ])
-    await message.answer("Выберите пакет:", reply_markup=pay_kb)
-    await message.answer("После оплаты отправьте фото(а).")
+    await state.set_state(ServiceStates.waiting_payment)
 
-@router.message(lambda m: m.text == "Оживить лицо на фото")
-async def animate_start(message: Message, state: FSMContext):
-    await state.set_state(UserState.photos)
+# Обработчик выбора услуги анимации
+@dp.message(lambda message: message.text == "Оживить лицо на фото", ServiceStates.choosing_service)
+async def animate_photo(message: types.Message, state: FSMContext):
+    await message.answer(
+        f"Услуга: Оживление лица на фото\n\n"
+        f"Для оплаты перейдите по ссылке:\n{YOOMONEY_ANIMATE_URL}\n\n"
+        f"После оплаты напишите «Готово»",
+        reply_markup=ReplyKeyboardRemove()
+    )
     await state.update_data(service="animate")
-    pay_btn = InlineKeyboardButton(text="Оживление — 130 ₽", url=YOOMONEY_ANIMATE)
-    await message.answer(
-        "Оплатите обработку:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[pay_btn]])
-    )
-    await message.answer("После оплаты отправьте фото.")
+    await state.set_state(ServiceStates.waiting_payment)
 
-@router.message(lambda m: m.text == "❓ Инструкция и цены")
-async def help(message: Message):
+# Обработчик подтверждения оплаты
+@dp.message(lambda message: message.text.lower() == "готово", ServiceStates.waiting_payment)
+async def payment_done(message: types.Message, state: FSMContext):
+    await message.answer("✅ Обработка завершена")
     await message.answer(
-        "💰 Цены:\n"
-        "• 1 фото — 110 ₽\n"
-        "• 3 фото — 280 ₽ (экономия 50 ₽)\n"
-        "• 5 фото — 420 ₽ (экономия 130 ₽)\n"
-        "• Оживление лица — 130 ₽\n\n"
-        "🔒 Все фото удаляются после обработки.\n"
-        "📩 Поддержка: @ваш_ник_в_телеграме",
-        reply_markup=MAIN_KEYBOARD
+        "Выберите следующую услугу:",
+        reply_markup=get_main_keyboard()
     )
+    await state.set_state(ServiceStates.choosing_service)
 
-@router.message(UserState.photos, lambda m: m.photo)
-async def process_photos(message: Message, state: FSMContext):
-    await message.answer("Обрабатываем... Это займёт 20–60 секунд.")
-    
-    # Получаем данные
-    data = await state.get_data()
+# Обработчик всех остальных сообщений в состоянии ожидания оплаты
+@dp.message(ServiceStates.waiting_payment)
+async def waiting_payment_other(message: types.Message):
+    await message.answer("Пожалуйста, напишите «Готово» после оплаты.")
+
+# Обработчик всех остальных сообщений
+@dp.message()
+async def echo(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None or current_state == ServiceStates.choosing_service:
+        await message.answer(
+            "Пожалуйста, выберите услугу из меню:",
+            reply_markup=get_main_keyboard()
+        )
+        await state.set_state(ServiceStates.choosing_service)
+
+# Запуск бота
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())    data = await state.get_data()
     service = data["service"]
     
     # Скачиваем фото
@@ -150,4 +156,5 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
+
     asyncio.run(main())
